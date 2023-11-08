@@ -1,0 +1,401 @@
+---
+title: "DM_analysis"
+author: "EOL"
+date: "2023-11-04"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+pacman::p_load(rjags, ggplot2)
+```
+
+# NEW
+```{r}
+# Define the JAGS model as a text string
+model_string <- "model {
+  for (i in 1:N) {  # Loop over trials
+    for (j in 1:M) {  # Loop over melodies/figures
+      # Rescorla-Wagner update rule
+      # V[i,j] is the associative strength for melody j at trial i
+      # alpha is the learning rate, delta is the prediction error
+      # R[i,j] is the reward received (1 for correct, 0 for incorrect)
+      
+      V[i+1,j] <- V[i,j] + alpha * (R[i,j] - V[i,j])
+
+      # Softmax rule for choice probabilities
+      # T is the temperature parameter of the softmax function
+      p[i,j] <- exp(V[i,j] / T) / sum(exp(V[i,1:M] / T))
+    }
+
+    # Likelihood of the observed choices
+    # choice[i] is the figure chosen by the subject on trial i
+    choice[i] ~ dcat(p[i,1:M])
+
+    # Prior distributions for parameters
+    # Incorporate working memory (WM[i]) and musical expertise (ME[i]) into priors if needed
+    alpha ~ dunif(0, 1)  # Uniform prior for learning rate
+    T ~ dunif(0, 5)  # Uniform prior for temperature parameter
+  }
+}"
+```
+
+```{r}
+set.seed(123)  # For reproducibility
+
+# Known parameters for simulation
+true_alpha <- 0.1  # Learning rate
+true_T <- 1       # Temperature parameter for softmax
+N <- 70           # Number of trials
+M <- 5            # Number of melodies/figures
+true_V <- matrix(0, nrow = N+1, ncol = M)  # Initial associative strengths
+
+# Create a vector of 'correct' melodies/figures for each trial
+# Assuming one correct melody/figure per trial
+correct_melodies <- sample(1:M, N, replace = TRUE)
+
+# Simulate choices and rewards
+simulated_choices <- integer(N)  # Placeholder for simulated choice data
+simulated_rewards <- matrix(0, nrow = N, ncol = M)  # Initialize rewards to zero
+
+# Simulate the learning process
+for (i in 1:N) {
+  # Set the reward for the correct melody/figure for this trial
+  simulated_rewards[i, correct_melodies[i]] <- 1
+  
+  # Update associative strengths based on Rescorla-Wagner model
+  for (j in 1:M) {
+    true_V[i+1,j] <- true_V[i,j] + true_alpha * (simulated_rewards[i,j] - true_V[i,j])
+  }
+  
+  # Calculate choice probabilities using softmax
+  exp_V <- exp(true_V[i,] / true_T)
+  choice_prob <- exp_V / sum(exp_V)
+  
+  # Simulate choice based on probabilities
+  simulated_choices[i] <- sample(1:M, 1, prob = choice_prob)
+}
+
+# Now create a data frame for the simulated choices
+simulated_data <- data.frame(
+  trial = 1:N,
+  choice = simulated_choices,
+  correct_choice = correct_melodies
+)
+
+# Save the simulated data to a CSV file
+write.csv(simulated_data, "simulated_data.csv", row.names = FALSE)
+
+
+```
+
+```{r}
+# Parameter recovery
+
+# Read the simulated data from the CSV file
+simulated_data <- read.csv("simulated_data.csv")
+
+# Prepare the data for JAGS
+data_for_jags <- list(
+  N = nrow(simulated_data),
+  M = length(unique(simulated_data$choice)),
+  choice = as.integer(simulated_data$choice),
+  R = matrix(0, nrow = nrow(simulated_data), ncol = length(unique(simulated_data$choice)))
+)
+
+# Populate the R matrix with rewards
+for (i in 1:nrow(simulated_data)) {
+  data_for_jags$R[i, simulated_data$correct_choice[i]] <- 1
+}
+
+# Prepare the initial values for the JAGS model
+init_values <- function() {
+  list(V = matrix(0.2, nrow = data_for_jags$N + 1, ncol = data_for_jags$M))
+}
+
+```
+
+```{r}
+# Compile the JAGS model
+jags_model <- jags.model(textConnection(model_string), data = data_for_jags, inits = init_values, n.chains = 3)
+
+# Burn-in phase
+update(jags_model, 1000)
+
+# Sample from the posterior distribution
+samples <- coda.samples(jags_model, variable.names = c("alpha", "T"), n.iter = 10000)
+
+# Check for convergence
+plot(samples)
+gelman.diag(samples)
+
+# Print a summary of the posterior distributions for the parameters
+print(summary(samples))
+
+```
+
+
+# OLD
+# Specifying my `JAGS Model`.
+- `N` is the total number of trials.
+- `M` is the number of melody-shape pairs (mb just replace with 5).
+- `alpha` is the learning rate.
+- `tau` is the temperature parameter for the softmax function.
+- `working_memory` and `music_expertise` are the per-trial working memory and musical expertise scores.
+- `V` is the matrix of associative strengths.
+- `choice` is the observed choice variable.
+- `outcome` is a binary variable indicating whether the choice was correct.
+
+```{r}
+model1 <- "model {
+  for (i in 1:N) { # N is the number of trials
+    # Learning rate is modulated by participant's working memory and expertise
+    alpha[i] <- beta0 + beta1 * working_memory[p[i]] + beta2 * expertise[p[i]]
+
+    # Calculate prediction error
+    PE[i] <- outcome[i] - V[p[i], t[i]] # t[i] is the trial number for participant p[i]
+
+    # Update rule for association strength
+    V[p[i], t[i] + 1] <- V[p[i], t[i]] + alpha[i] * PE[i]
+
+    # Softmax choice probability
+    for (j in 1:J) { # J is the number of possible choices
+      choice_prob[i, j] <- exp(V[p[i], t[i], j] / tau) / sum(exp(V[p[i], t[i], ] / tau))
+    }
+
+    # Likelihood of the observed choice
+    response[i] ~ dcat(choice_prob[i, ])
+  }
+
+  # Priors for unknown parameters
+  beta0 ~ dnorm(0, .01)
+  beta1 ~ dnorm(0, .01)
+  beta2 ~ dnorm(0, .01)
+  tau ~ dunif(0, 5) # Arbitrary upper bound, should be adjusted based on data
+
+  # Initial values for association strength
+  for (p in 1:P) { # P is the number of participants
+    for (j in 1:J) {
+      V[p, 1, j] <- 0 # Assuming no initial associations
+    }
+  }
+}"
+
+```
+
+```{r}
+jags_model <- "model{
+  for (i in 1:N) { # Loop over trials
+    for (j in 1:M) { # Loop over melody-shape associations
+      # Prediction error: the difference between the outcome (correct/incorrect) and the current association strength
+      prediction_error[i, j] <- outcome[i, j] - V[i, j]
+      
+      # Update rule for association strengths (Rescorla-Wagner)
+      V[i+1, j] <- V[i, j] + (alpha[i] * prediction_error[i, j])
+      
+      # Softmax choice probability
+      choice_prob[i, j] <- exp(V[i, j] / tau[i]) / sum(exp(V[i, ] / tau[i]))
+    }
+    # The observed choice follows a categorical distribution based on choice probabilities
+    choice[i] ~ dcat(choice_prob[i, ])
+
+    # Working memory and musical expertise effects (modulating learning rate or temperature)
+    alpha[i] <- baseline_alpha + wm_effect * working_memory[i] + me_effect * music_expertise[i]
+    tau[i] <- baseline_tau + wm_effect_tau * working_memory[i] + me_effect_tau * music_expertise[i]
+    
+    # Priors for baseline parameters and effects
+    baseline_alpha ~ dunif(0, 1)
+    baseline_tau ~ dgamma(1, 1)
+    wm_effect ~ dnorm(0, .001)
+    me_effect ~ dnorm(0, .001)
+    wm_effect_tau ~ dnorm(0, .001)
+    me_effect_tau ~ dnorm(0, .001)
+  }
+}"
+```
+
+# Parameter Recovery
+
+## Simulate Data Using Known Parameters
+
+The chunk below simulates a dataset with a learning model using softmax for choice probabilities and updates the association strengths using a Rescorla-Wagner rule
+```{r}
+# Set known parameter values
+known_alpha <- 0.3 # Example learning rate
+known_tau <- 0.5 # Example temperature
+known_wm_effect <- 0.1 # Example working memory effect
+known_me_effect <- 0.1 # Example music expertise effect
+known_wm_effect_tau <- 0.05 # Example working memory effect on temperature
+known_me_effect_tau <- 0.05 # Example music expertise effect on temperature
+
+# Number of participants and trials
+num_participants <- 100 # Example number of participants
+num_trials <- 70 # Each participant has 70 trials
+
+# Initialize vectors to store simulated data
+working_memory <- runif(num_participants) # Random working memory scores
+music_expertise <- runif(num_participants) # Random music expertise scores
+choices <- matrix(nrow = num_trials, ncol = num_participants) # Choices for each participant on each trial
+outcomes <- matrix(nrow = num_trials, ncol = num_participants) # Outcomes for each trial
+
+# Simulate data for each participant
+for (p in 1:num_participants) {
+    # Initialize association strengths V for each melody-shape pair
+    V <- matrix(0, nrow = num_trials + 1, ncol = 5) # 5 melodies and 5 shapes, with an extra row for the initial values
+    
+    for (t in 1:num_trials) {
+        # Calculate alpha and tau for the current trial
+        alpha <- known_alpha + known_wm_effect * working_memory[p] + known_me_effect * music_expertise[p]
+        tau <- known_tau + known_wm_effect_tau * working_memory[p] + known_me_effect_tau * music_expertise[p]
+        
+        # Calculate choice probabilities with the softmax function
+        choice_probabilities <- exp(V[t,] / tau) / sum(exp(V[t,] / tau))
+        
+        # Simulate choice based on probabilities
+        choice <- sample(1:5, 1, prob = choice_probabilities)
+        choices[t, p] <- choice
+        
+        # Assume a correct association for simulation purposes (for example, melody 1 goes with shape 1)
+        correct_choice <- (t %% 5) + 1 # This will cycle through 1 to 5 as the correct answer
+        
+        # Determine the outcome (1 for correct, 0 for incorrect)
+        outcome <- as.numeric(choice == correct_choice)
+        outcomes[t, p] <- outcome
+        
+        # Update association strengths V based on the outcome
+        prediction_error <- outcome - V[t, choice]
+        V[t+1,] <- V[t,]
+        V[t+1, choice] <- V[t, choice] + alpha * prediction_error
+    }
+}
+
+# Convert matrices to long format for saving
+simulated_data <- expand.grid(
+  trial = 1:num_trials,
+  participant = 1:num_participants
+)
+simulated_data$choice <- as.vector(t(choices))
+simulated_data$outcome <- as.vector(t(outcomes))
+simulated_data$working_memory <- rep(working_memory, each = num_trials)
+simulated_data$music_expertise <- rep(music_expertise, each = num_trials)
+
+# Save the simulated data to a CSV file
+write.csv(simulated_data, "simulated_data.csv", row.names = FALSE)
+
+# Output to let user know data has been saved
+cat("Simulated data has been saved to 'simulated_data.csv'.\n")
+
+```
+
+```{r}
+# Prepare data for JAGS
+jags_data <- list(
+  N = nrow(simulated_data),
+  M = 5,
+  outcome = as.vector(simulated_data$outcome), # Flatten the outcome to a vector
+  choice = as.vector(simulated_data$choice), # Flatten the choice to a vector
+  working_memory = as.vector(simulated_data$working_memory), # Flatten working memory to a vector if necessary
+  music_expertise = as.vector(simulated_data$music_expertise) # Flatten music expertise to a vector if necessary
+)
+
+
+# Flatten the 'choices' matrix into a vector
+choices_vector <- as.vector(t(choices))
+
+# Parameters to monitor
+params <- c("baseline_alpha", "baseline_tau", "wm_effect", "me_effect", "wm_effect_tau", "me_effect_tau")
+
+# Initial values for JAGS
+inits <- function() {
+  list(
+    baseline_alpha = runif(1, 0, 1),
+    baseline_tau = rgamma(1, 1, 1),
+    wm_effect = rnorm(1, 0, 0.1),
+    me_effect = rnorm(1, 0, 0.1),
+    wm_effect_tau = rnorm(1, 0, 0.1),
+    me_effect_tau = rnorm(1, 0, 0.1)
+  )
+}
+```
+
+```{r}
+# Set up the JAGS model
+jags_model <- jags.model(textConnection(jags_model), data = jags_data, inits = inits, n.chains = 3)
+
+# Burn-in
+update(jags_model, 500)
+
+# Model fitting
+samples <- coda.samples(jags_model, variable.names = params, n.iter = 5000)
+
+# Output the results
+print(samples)
+```
+
+```{r}
+# Before running the JAGS model
+print(dim(jags_data$outcome))
+print(head(jags_data$outcome))
+```
+
+```{r}
+# Convert MCMC output to a dataframe
+library(ggplot2)
+
+samples_df <- as.data.frame(as.mcmc(samples))
+
+# Plot the parameter recovery
+p <- ggplot(samples_df, aes(x = seq_along(baseline_alpha))) +
+  geom_line(aes(y = baseline_alpha), color = "blue") +
+  geom_hline(aes(yintercept = known_alpha), color = "red", linetype = "dashed") +
+  labs(title = "Parameter Recovery for Alpha", x = "Iteration", y = "Estimated Alpha") +
+  theme_minimal()
+
+print(p)
+
+p <- ggplot(samples_df, aes(x = seq_along(baseline_tau))) +
+  geom_line(aes(y = baseline_tau), color = "green") +
+  geom_hline(aes(yintercept = known_tau), color = "red", linetype = "dashed") +
+  labs(title = "Parameter Recovery for Tau", x = "Iteration", y = "Estimated Tau") +
+  theme_minimal()
+
+print(p)
+
+```
+
+# Run model on data
+
+```{r}
+library(rjags)
+
+# Assuming 'df' is your dataframe and it's already loaded in R
+data_list <- list(
+  N = nrow(df),
+  J = length(unique(df$response)),
+  P = length(unique(df$participant)),
+  t = df$trial,
+  p = as.numeric(factor(df$participant)),
+  response = as.numeric(factor(df$response)),
+  outcome = df$outcome,
+  working_memory = df$working_memory,
+  expertise = df$musical_expertise
+)
+
+# Initial values for the JAGS model
+inits <- function() {
+  list(beta0 = rnorm(1, 0, 0.1), beta1 = rnorm(1, 0, 0.1), beta2 = rnorm(1, 0, 0.1), tau = runif(1, 0, 1))
+}
+
+# Model file
+model_file <- "path_to_your_model_file.jags"
+
+# Run the JAGS model
+jags_model <- jags.model(file = model_file, data = data_list, inits = inits, n.chains = 3)
+update(jags_model, 1000) # Burn-in
+samples <- coda.samples(jags_model, variable.names
+
+```
+

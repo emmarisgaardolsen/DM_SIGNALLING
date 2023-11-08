@@ -1,0 +1,126 @@
+---
+title: "visualise signalling data"
+author: "EOL"
+date: "2023-11-05"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+pacman::p_load(ggplot2,tidyverse)
+```
+
+```{r}
+data_path <- '/Users/emmaolsen/Library/CloudStorage/OneDrive-Aarhusuniversitet/cognitive_science/00_MS_cogsci/1_DM/exam23/concatenated_data.csv'
+data <- read.csv(data_path,sep=",")
+```
+
+```{r}
+# Calculate medians for wm_total and met_total
+wm_median <- median(data$wm_total, na.rm = TRUE)
+met_median <- median(data$met_total, na.rm = TRUE)
+
+# Create high/low groups based on medians
+data$wm_group <- ifelse(data$wm_total >= wm_median, "high", "low")
+data$met_group <- ifelse(data$met_total >= met_median, "high", "low")
+```
+
+```{r}
+unique_values <- unique(data$subject)
+num_unique_values <- length(unique_values)
+```
+
+
+```{r}
+#data <- data %>%
+ # arrange(subject, trial)
+```
+
+```{r}
+## Check that sub 58 looks normal and that sub 38 is removed 
+
+# Filter data for subjects with ID 51 to 66
+filtered_data <- data[data$subject >= 55 & data$subject <= 60, ]
+
+ggplot(filtered_data, aes(x = trial, y = count_correct, group = subject, color = as.factor(subject))) +
+  geom_line() +
+  theme_minimal() +
+  labs(title = "Learning Trajectories of Each Subject (To detect weird trajectory)",
+       x = "Trial Number",
+       y = "Cumulative Correct Responses",
+       color = "Subject")
+
+```
+
+```{r}
+# Plot learning trajectories for all subjects with color coding based on wm_group
+ggplot(data, aes(x = trial, y = count_correct, group = subject, color = wm_group)) +
+  geom_line() +
+  scale_color_manual(values = c("high" = "pink", "low" = "blue")) + # Set custom colors based on wm_group
+  theme_minimal() +
+  labs(title = "Learning Trajectories of Each Subject (Coloured by working memory)",
+       x = "Trial Number",
+       y = "Cumulative Correct Responses",
+       color = "WM Group") # Update legend title to reflect wm_group
+```
+
+```{r}
+# Plot learning trajectories for all subjects with color coding based on wm_group
+ggplot(data, aes(x = trial, y = count_correct, group = subject, color = met_group)) +
+  geom_line() +
+  scale_color_manual(values = c("high" = "pink", "low" = "blue")) + # Set custom colors based on wm_group
+  theme_minimal() +
+  labs(title = "Learning Trajectories of Each Subject (Coloured by MET score)",
+       x = "Trial Number",
+       y = "Cumulative Correct Responses",
+       color = "MET Group") # Update legend title to reflect wm_group
+```
+
+```{r}
+# Plot learning trajectories for all subjects
+ggplot(data, aes(x = trial, y = count_correct, group = subject, color = as.factor(subject))) +
+  geom_line() +
+  theme_minimal() +
+  labs(title = "Learning Trajectories of Each Subject",
+       x = "Trial Number",
+       y = "Cumulative Correct Responses",
+       color = "Subject")
+```
+
+
+```{r}
+# Plot learning trajectories by wm_group
+wm_grouped <- data %>%
+  group_by(trial, wm_group) %>%
+  summarize(mean_count_correct = mean(count_correct, na.rm = TRUE)) 
+
+ggplot(wm_grouped, aes(x = trial, y = mean_count_correct, color = wm_group)) +
+  geom_line() +
+  theme_minimal() +
+  labs(title = "Learning Trajectories by Working Memory (wm_total)",
+       x = "Trial Number",
+       y = "Average Cumulative Correct Responses",
+       color = "WM Group")
+
+```
+
+```{r}
+# Plot learning trajectories by met_group
+met_grouped <- data %>%
+  group_by(trial, met_group) %>%
+  summarize(mean_count_correct = mean(count_correct, na.rm = TRUE))
+
+ggplot(met_grouped, aes(x = trial, y = mean_count_correct, color = met_group)) +
+  geom_line() +
+  theme_minimal() +
+  labs(title = "Learning Trajectories by Musical Expertise (met_total)",
+       x = "Trial Number",
+       y = "Average Cumulative Correct Responses",
+       color = "MET Group")
+```
+
+
+

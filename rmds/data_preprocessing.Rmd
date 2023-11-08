@@ -1,0 +1,113 @@
+---
+title: "DM_preproc"
+author: "EOL"
+date: "2023-11-05"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+met_path <- '/Users/emmaolsen/Library/CloudStorage/OneDrive-Aarhusuniversitet/cognitive_science/00_MS_cogsci/1_DM/exam23/data_MET.csv'
+wm_path <- '/Users/emmaolsen/Library/CloudStorage/OneDrive-Aarhusuniversitet/cognitive_science/00_MS_cogsci/1_DM/exam23/data_DIGIT.csv'
+
+met_data <- read.csv(met_path)
+wm_data <- read.csv(wm_path)
+
+# Rename 'name Subject' column in met_data to 'subject'
+colnames(met_data)[colnames(met_data) == 'Subject'] <- 'subject'
+# Rename 'SUB' column in wm_data to 'subject'
+colnames(wm_data)[colnames(wm_data) == 'SUB'] <- 'subject'
+```
+
+
+```{r}
+# Define the path to the directory containing the .txt files
+directory_path <- "/Users/emmaolsen/Library/CloudStorage/OneDrive-Aarhusuniversitet/cognitive_science/00_MS_cogsci/1_DM/exam23/signalling_game"
+
+# List all .txt files in the directory
+file_names <- list.files(path = directory_path, pattern = "\\.txt$", full.names = TRUE)
+
+# Read all files into a list of dataframes
+dataframes_list <- lapply(file_names, function(file) {
+  # Read the file and add a 'file_name' column with the file's name
+  df <- read.table(file, header = FALSE, sep = "\t")
+  df$file_name <- basename(file)  # Add the file name as a new column
+  
+  # Add a 'gender' column based on the presence of "girl" or "boy" in the file name
+  df$gender <- ifelse(grepl("girl", df$file_name, ignore.case = TRUE), "girl",
+                      ifelse(grepl("boy", df$file_name, ignore.case = TRUE), "boy",
+                             "unknown"))
+  
+  # Rename the columns as specified
+  colnames(df) <- c('STIM', 'trial', 'keyboard', 'choice', 'count_correct', 'filename', 'gender')
+  
+  # Remove spaces in 'STIM' and 'choice' columns
+  df$STIM <- gsub(" ", "", df$STIM)
+  df$choice <- gsub(" ", "", df$choice)
+   # Add a 'correct' column with values 1 if 'STIM' and 'choice' are the same, and 0 otherwise
+  df$correct <- as.integer(df$STIM == df$choice)
+  # Remove "signalingfMRI.txt" from 'filename' column
+  df$filename <- gsub("signalingfMRI\\.txt", "", df$filename)
+  df$count_correct <- gsub("ct=  ","",df$count_correct)
+  df$trial <- gsub("trial","",df$trial)
+  
+  # Extract numbers from 'filename' and create a 'subject' column
+  df$subject <- as.numeric(gsub("\\D", "", df$filename))
+  
+  
+  df$count_correct <- as.numeric(df$count_correct)
+  df$trial <- as.factor(df$trial)
+  
+  df
+  
+})
+
+# Optionally, if all dataframes have the same structure and you want one large dataframe
+# install.packages("dplyr") # If dplyr is not installed
+library(dplyr)
+combined_dataframe <- bind_rows(dataframes_list)
+```
+
+```{r}
+ls.str(combined_dataframe)
+```
+
+```{r}
+# Combine all data based on 'subject' column
+final_combined_dataframe <- merge(combined_dataframe, met_data, by = 'subject', all.x = TRUE)
+final_combined_dataframe <- merge(final_combined_dataframe, wm_data, by = 'subject', all.x = TRUE)
+```
+
+```{r}
+final_combined_dataframe$met_total <- final_combined_dataframe$MEL + final_combined_dataframe$RYT
+final_combined_dataframe$wm_total <- final_combined_dataframe$Forfra + final_combined_dataframe$Bagfra + final_combined_dataframe$Rangordning
+```
+
+```{r}
+ls.str(final_combined_dataframe)
+```
+```{r}
+# remove subject 38 cause that's weird
+final_combined_dataframe <- final_combined_dataframe %>%
+  filter(subject != 38)
+```
+
+```{r}
+# Fixing the weird subject 8 that reset' counts from the 41th trial and onwards instead of accumulating them, due to the experiment being stopped. 
+
+for (row in 4106:4133) {
+  if (final_combined_dataframe$STIM[row] == final_combined_dataframe$choice[row]) {
+    final_combined_dataframe$count_correct[row] <- final_combined_dataframe$count_correct[row - 1] + 1
+  } else {
+    final_combined_dataframe$count_correct[row] <- final_combined_dataframe$count_correct[row - 1]
+  }
+}
+```
+
+```{r}
+write.csv(final_combined_dataframe, file = "concatenated_data.csv", row.names = FALSE)
+```
+
